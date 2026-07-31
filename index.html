@@ -461,6 +461,18 @@
   .ex-name { font-size: 1rem; font-weight: 600; flex: 1; line-height: 1.5; color: #F7F7F7; }
   .ex-detail { font-size: 13.5px; font-weight: 600; color: #D1D5DB; text-align: right; flex-shrink: 0; line-height: 1.55; max-width: 240px; min-width: 60px; }
   .ex-detail strong { display: block; color: var(--gold); font-weight: 800; font-size: 15.5px; letter-spacing: 0.01em; }
+  .set-tracker { display: flex; flex-direction: column; gap: 4px; padding: 6px 0.4rem 10px 1.4rem; }
+  .set-row { display: flex; align-items: center; gap: 8px; }
+  .set-row-label { width: 54px; flex-shrink: 0; font-size: 10.5px; color: var(--text-muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; transition: color .2s ease; }
+  .set-row.set-row-done .set-row-label { color: var(--teal); }
+  .set-input { width: 58px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px; padding: 5px 6px; color: var(--text-primary); font-size: 12.5px; text-align: center; font-family: 'Inter', sans-serif; }
+  .set-input:focus { border-color: var(--red); outline: none; }
+  .set-input::placeholder { color: var(--text-muted); }
+  .set-check { width: 16px; height: 16px; accent-color: var(--teal); cursor: pointer; margin-left: 2px; }
+  @media (max-width: 600px) {
+    .set-row-label { width: 44px; font-size: 9.5px; }
+    .set-input { width: 50px; }
+  }
   .video-link { color: var(--gold); font-weight: 700; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; font-size: 11px; letter-spacing: 0.02em; border-bottom: 1px solid rgba(255,214,0,0.35); padding-bottom: 1px; cursor: pointer; white-space: nowrap; transition: color 0.2s ease, border-color 0.2s ease; }
   .video-link:hover { color: var(--red-light); border-color: var(--red-light); }
   .video-popup-wrap { display: none; position: fixed; bottom: 20px; right: 20px; z-index: 300; width: 320px; max-width: calc(100vw - 32px); }
@@ -1266,7 +1278,7 @@ const DAYS = [
    STATE
 ========================================================= */
 const STORAGE_KEY = 'coachjp_franco_arminana_progress_v1';
-const state = { mode:'complete', currentWeek:0, currentDay:'dia1', completed:{}, fatigue:{} };
+const state = { mode:'complete', currentWeek:0, currentDay:'dia1', completed:{}, fatigue:{}, loads:{} };
 let timerCounter = 0;
 const liveTimers = {};
 let activeTimerId = null;
@@ -1278,12 +1290,15 @@ function loadProgress(){
       if(parsed && typeof parsed === 'object'){
         state.completed = parsed.completed || {};
         state.fatigue = parsed.fatigue || {};
+        state.loads = parsed.loads || {};
+        if(parsed.mode === 'complete' || parsed.mode === 'quick') state.mode = parsed.mode;
+        if(typeof parsed.currentWeek === 'number' && WEEKS_META[parsed.currentWeek]) state.currentWeek = parsed.currentWeek;
       }
     }
-  }catch(e){ state.completed = {}; state.fatigue = {}; }
+  }catch(e){ state.completed = {}; state.fatigue = {}; state.loads = {}; }
 }
 function saveProgress(){
-  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify({ completed: state.completed, fatigue: state.fatigue })); }catch(e){}
+  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify({ completed: state.completed, fatigue: state.fatigue, loads: state.loads, mode: state.mode, currentWeek: state.currentWeek })); }catch(e){}
 }
 function isBlockDone(weekIdx, dayId, blockId){
   return !!(state.completed[weekIdx] && state.completed[weekIdx][dayId] && state.completed[weekIdx][dayId][blockId]);
@@ -1303,6 +1318,33 @@ function setDayDone(weekIdx, dayId, val, blockIds){
   state.completed[weekIdx][dayId].__dayDone = val;
   blockIds.forEach(function(bid){ state.completed[weekIdx][dayId][bid] = val; });
   saveProgress();
+}
+/* =========================================================
+   REGISTRO DE CARGAS (Kg / Reps / check por serie)
+========================================================= */
+function getLoadKey(weekIdx, dayId, blockId, exIdx, setIdx){
+  return weekIdx + '|' + dayId + '|' + blockId + '|' + exIdx + '|' + setIdx;
+}
+function getLoad(key){ return state.loads[key] || {}; }
+function setLoadField(key, field, value){
+  state.loads[key] = state.loads[key] || {};
+  state.loads[key][field] = value;
+  saveProgress();
+}
+function renderSetRows(weekIdx, dayId, blockId, exIdx, numSets, repsHint){
+  let html = '<div class="set-tracker">';
+  for(let i=1;i<=numSets;i++){
+    const key = getLoadKey(weekIdx, dayId, blockId, exIdx, i);
+    const ld = getLoad(key);
+    html += '<div class="set-row' + (ld.done?' set-row-done':'') + '" data-set-key="' + key + '">' +
+      '<span class="set-row-label">Serie ' + i + '</span>' +
+      '<input class="set-input set-kg" type="number" inputmode="decimal" placeholder="Kg" value="' + (ld.kg!=null?ld.kg:'') + '" />' +
+      '<input class="set-input set-reps" type="number" inputmode="numeric" placeholder="' + (repsHint||'Reps') + '" value="' + (ld.reps!=null?ld.reps:'') + '" />' +
+      '<input class="set-check" type="checkbox" ' + (ld.done?'checked':'') + ' />' +
+    '</div>';
+  }
+  html += '</div>';
+  return html;
 }
 function fatigueKey(weekIdx, dayId){ return weekIdx + '_' + dayId; }
 function getFatigue(weekIdx, dayId){ return state.fatigue[fatigueKey(weekIdx, dayId)] || null; }
@@ -1587,6 +1629,7 @@ function renderWeekSelector(){
   weekSelectorEl.querySelectorAll('.week-pill').forEach(function(p){
     p.addEventListener('click', function(){
       state.currentWeek = parseInt(p.dataset.week, 10);
+      saveProgress();
       renderWeekSelector();
       renderWeekInfo();
       renderMain();
@@ -1653,6 +1696,7 @@ function renderBlockInner(block, day, weekIdx){
     const wd = weekDetail(block, weekIdx);
     html += '<div class="ex-row"><div class="ex-bullet"></div><span class="ex-name">' + block.exerciseName + videoLinkHtml(block.exerciseName) + '</span>' +
       '<span class="ex-detail"><strong>' + wd.setsLabel + '</strong>' + block.reps + ' · Tempo ' + block.tempo + '</span></div>';
+    html += renderSetRows(weekIdx, day.id, block.id, 0, wd.efSets, block.reps);
     html += '<div class="coach-note"><strong>Coach Note</strong>' + block.tips + '</div>';
     if(block.altNote){
       html += '<div class="coach-note" style="border-left-color: rgba(0,191,165,0.4);"><strong style="color:var(--teal)">Alternativa</strong>' + block.altNote + '</div>';
@@ -1664,8 +1708,9 @@ function renderBlockInner(block, day, weekIdx){
   } else if(block.isSuperset){
     const sd = supersetDetail(block, weekIdx);
     html += '<div class="superset-header"><span class="sh-icon">🔗</span><span class="sh-text">' + sd.header + '</span></div>';
-    sd.exercises.forEach(function(ex){
+    sd.exercises.forEach(function(ex, exIdx){
       html += '<div class="ex-row"><div class="ex-bullet"></div><span class="ex-name">' + ex.name + videoLinkHtml(ex.name) + '</span><span class="ex-detail">' + ex.reps + ' · Tempo ' + ex.tempo + '</span></div>';
+      html += renderSetRows(weekIdx, day.id, block.id, exIdx, sd.rounds, ex.reps);
     });
     html += '<div class="directive-chip">Sin descanso entre ejercicios</div>';
     html += '<div class="coach-note"><strong>Coach Note</strong>' + block.tips + '</div>';
@@ -1806,6 +1851,18 @@ function wireBlockInteractions(day, weekIdx, blocks){
       updateProgress(day, weekIdx, blocks);
       renderDayTabs();
     });
+    blockEl.querySelectorAll('.set-row').forEach(function(row){
+      const key = row.dataset.setKey;
+      const kgInput = row.querySelector('.set-kg');
+      const repsInput = row.querySelector('.set-reps');
+      const chk = row.querySelector('.set-check');
+      kgInput.addEventListener('input', function(){ setLoadField(key, 'kg', kgInput.value); });
+      repsInput.addEventListener('input', function(){ setLoadField(key, 'reps', repsInput.value); });
+      chk.addEventListener('change', function(){
+        setLoadField(key, 'done', chk.checked);
+        row.classList.toggle('set-row-done', chk.checked);
+      });
+    });
     const timerSlot = blockEl.querySelector('.timer-slot');
     if(timerSlot){
       const rounds = parseInt(timerSlot.dataset.rounds, 10) || 1;
@@ -1922,6 +1979,7 @@ modeSwitchEl.querySelectorAll('.mode-pill').forEach(function(btn){
     modeSwitchEl.querySelectorAll('.mode-pill').forEach(function(b){ b.classList.remove('active'); });
     btn.classList.add('active');
     state.mode = btn.dataset.mode;
+    saveProgress();
     document.body.classList.toggle('quick-mode', state.mode === 'quick');
     renderMain();
   });
@@ -2081,6 +2139,7 @@ function init(){
   renderDayTabs();
   renderMain();
   document.body.classList.toggle('quick-mode', state.mode === 'quick');
+  modeSwitchEl.querySelectorAll('.mode-pill').forEach(function(b){ b.classList.toggle('active', b.dataset.mode === state.mode); });
 }
 if(document.readyState === 'loading'){
   document.addEventListener('DOMContentLoaded', init);
